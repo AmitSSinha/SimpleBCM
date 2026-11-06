@@ -321,6 +321,12 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     legacy.request.data = reinterpret_cast<uintptr_t>(shadow);
     legacy.request.length = static_cast<uint32_t>(get ? outputSize : header->length);
     diagRequestedLength = legacy.request.length;
+    if (diagHostAp && set) {
+        const uint32_t take = diagRequestedLength < sizeof(bcm::hostApDiag.data) ?
+            diagRequestedLength : static_cast<uint32_t>(sizeof(bcm::hostApDiag.data));
+        memcpy(bcm::hostApDiag.data, shadow, take);
+        bcm::hostApDiag.captured = take;
+    }
     // IO80211FamilyLegacy setIBSS_Or_HostAP_Mode (IBSS_MODE 0x18 / HOST_AP_MODE 0x19)
     // copies req_len bytes into a fixed 1500-byte stack buffer without a bounds check.
     // Sequoia's airportd sends a larger native struct when enabling sharing/host-AP,
@@ -387,6 +393,16 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
         }
     }
 done:
+    if (diagHostAp) {
+        if (!set || !diagRequestedLength)
+            bcm::hostApDiag.captured = 0;
+        bcm::hostApDiag.request = static_cast<uint32_t>(request);
+        bcm::hostApDiag.value = legacy.request.value;
+        bcm::hostApDiag.requestedLength = diagRequestedLength;
+        bcm::hostApDiag.passedLength = legacy.request.length;
+        bcm::hostApDiag.result = static_cast<uint32_t>(result);
+        __atomic_fetch_add(&bcm::hostApDiag.count, 1U, __ATOMIC_RELEASE);
+    }
     // DIAGNOSTIC (host-AP investigation): log IBSS/HostAP traffic and every failed set.
     if (diagHostAp || (set && result != kIOReturnSuccess)) {
         SYSLOG("diag", "%s req=0x%x val=%d len=%u->%u result=0x%x if=%.16s",

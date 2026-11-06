@@ -64,6 +64,20 @@ struct Counters {
 
 extern Counters counters;
 
+// DIAGNOSTIC (host-AP investigation): last IBSS/HostAP request, published to the I/O Registry.
+struct HostApDiag {
+    uint32_t count;
+    uint32_t request;
+    int32_t value;
+    uint32_t requestedLength;
+    uint32_t passedLength;
+    uint32_t result;
+    uint32_t captured;
+    uint8_t data[2048];
+};
+
+extern HostApDiag hostApDiag;
+
 class Bridge {
 public:
     static void initialize();

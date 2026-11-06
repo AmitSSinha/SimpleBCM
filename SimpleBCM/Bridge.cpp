@@ -26,6 +26,7 @@
 namespace bcm {
 
 Counters counters {};
+HostApDiag hostApDiag {};
 static uint32_t state;
 static IOService *observedController;
 static const char *failure = "WaitingForDependencies";
@@ -809,6 +810,17 @@ void Bridge::publish(IOService *service) {
     service->setProperty("LastAssociationEventLength", __atomic_load_n(&counters.lastAssociationEventLength, __ATOMIC_RELAXED), 32);
     service->setProperty("LastAssociationEventReadResult", __atomic_load_n(&counters.lastAssociationEventReadResult, __ATOMIC_RELAXED), 32);
     service->setProperty("LastAvailabilityReadResult", __atomic_load_n(&counters.lastAvailabilityReadResult, __ATOMIC_RELAXED), 32);
+    // DIAGNOSTIC (host-AP investigation)
+    if (__atomic_load_n(&hostApDiag.count, __ATOMIC_ACQUIRE)) {
+        service->setProperty("DiagHostApCount", hostApDiag.count, 32);
+        service->setProperty("DiagHostApRequest", hostApDiag.request, 32);
+        service->setProperty("DiagHostApValue", static_cast<uint32_t>(hostApDiag.value), 32);
+        service->setProperty("DiagHostApRequestedLength", hostApDiag.requestedLength, 32);
+        service->setProperty("DiagHostApPassedLength", hostApDiag.passedLength, 32);
+        service->setProperty("DiagHostApResult", hostApDiag.result, 32);
+        if (hostApDiag.captured)
+            service->setProperty("DiagHostApData", hostApDiag.data, hostApDiag.captured);
+    }
 }
 
 }
