@@ -287,6 +287,8 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     const bool associate = set && request == bcm::AssociateRequest;
     const bool roamProfiles = request == bcm::RoamProfileRequest && abi.roamProfileSize == bcm::NativeRoamProfileSize;
     bool outputPrepared = false;
+    uint32_t diagRequestedLength = 0;
+    const bool diagHostAp = request == bcm::IbssModeRequest || request == bcm::HostApModeRequest;
     __atomic_fetch_add(&bcm::counters.commands, 1ULL, __ATOMIC_RELAXED);
     __atomic_store_n(&bcm::counters.lastRequest, static_cast<uint32_t>(request), __ATOMIC_RELAXED);
     if (associate)
@@ -318,6 +320,7 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     }
     legacy.request.data = reinterpret_cast<uintptr_t>(shadow);
     legacy.request.length = static_cast<uint32_t>(get ? outputSize : header->length);
+    diagRequestedLength = legacy.request.length;
     // IO80211FamilyLegacy setIBSS_Or_HostAP_Mode (IBSS_MODE 0x18 / HOST_AP_MODE 0x19)
     // copies req_len bytes into a fixed 1500-byte stack buffer without a bounds check.
     // Sequoia's airportd sends a larger native struct when enabling sharing/host-AP,
@@ -384,6 +387,22 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
         }
     }
 done:
+    // DIAGNOSTIC (host-AP investigation): log IBSS/HostAP traffic and every failed set.
+    if (diagHostAp || (set && result != kIOReturnSuccess)) {
+        SYSLOG("diag", "%s req=0x%x val=%d len=%u->%u result=0x%x if=%.16s",
+               set ? "SET" : get ? "GET" : "?", static_cast<uint32_t>(request), legacy.request.value,
+               diagRequestedLength, legacy.request.length, static_cast<uint32_t>(result), endpoint.name);
+        if (diagHostAp && set && diagRequestedLength) {
+            const uint32_t dump = diagRequestedLength < 512 ? diagRequestedLength : 512;
+            for (uint32_t row = 0; row < dump; row += 32) {
+                char line[32 * 2 + 1];
+                uint32_t n = 0;
+                for (uint32_t i = row; i < row + 32 && i < dump; ++i)
+                    n += static_cast<uint32_t>(snprintf(line + n, sizeof(line) - n, "%02x", shadow[i]));
+                SYSLOG("diag", "  +%03x %s", row, line);
+            }
+        }
+    }
     if (outputPrepared) {
         const auto status = arguments->structureOutputDescriptor->complete(kIODirectionIn);
         if (result == kIOReturnSuccess)
