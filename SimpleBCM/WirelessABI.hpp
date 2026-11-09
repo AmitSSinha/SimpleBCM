@@ -37,6 +37,9 @@ constexpr size_t LegacyCapabilitySize = 12;
 constexpr size_t ScanCompletionCapabilityByte = 5;
 constexpr uint8_t ScanCompletionCapabilityMask = 0x40;
 constexpr uint32_t AssociateRequest = 20;
+constexpr uint32_t IbssModeRequest = 0x18;
+constexpr uint32_t HostApModeRequest = 0x19;
+constexpr uint32_t LegacyHostApBufferSize = 0x5DC;
 constexpr size_t LegacyAssociateSize = 0x224;
 constexpr uint32_t RoamProfileRequest = 216;
 constexpr size_t NativeRoamProfileSize = 0x180;
@@ -301,6 +304,40 @@ inline bool prepareAssociate(Request &request, uint8_t *buffer, size_t capacity,
         buffer[offset] = 0;
     request.length = LegacyAssociateSize;
     return true;
+}
+
+// HOST_AP start: Sequoia apple80211_network_data -> legacy AirPort_BrcmNIC layout.
+// Native:  ver@0 mode@4 authLower@8 authUpper@0xC (u32)  channel@0x10 ssidLen@0x1C ssid@0x20 key@0x40
+// Legacy:  ver@0 mode@4 authLower@6 authUpper@8  (u16)  channel@0x0C ssidLen@0x18 ssid@0x1C key@0x3C
+// Legacy key: ver@+0 len@+4 cipher@+8 flags@+0xC bytes@+0x10. AirPort_BrcmNIC::setCIPHER_KEY
+// takes a WPA/WPA2 passphrase as cipher 10 (WLC_SET_WSEC_PMK); cipher 0 means "no key", which
+// would bring the AP up open. Returns the length to pass to the legacy driver.
+constexpr uint32_t LegacyCipherPassphrase = 10;
+constexpr uint32_t AuthUpperWpaPsk = 1U << 1;
+constexpr uint32_t AuthUpperWpa2Psk = 1U << 3;
+
+inline uint32_t translateHostApNetworkData(uint8_t *buffer, uint32_t length) {
+    constexpr uint32_t legacySize = LegacyHostApBufferSize;
+    if (!buffer || length < 0x10 + 0x50 || length - 4 < legacySize)
+        return length < legacySize ? length : legacySize;
+    const auto lower = readUInt32(buffer + 8);
+    const auto upper = readUInt32(buffer + 12);
+    if (lower > UINT16_MAX || upper > UINT16_MAX)
+        return legacySize;
+    for (uint32_t offset = 0xC; offset < legacySize; ++offset)
+        buffer[offset] = buffer[offset + 4];
+    buffer[6] = static_cast<uint8_t>(lower);
+    buffer[7] = static_cast<uint8_t>(lower >> 8);
+    buffer[8] = static_cast<uint8_t>(upper);
+    buffer[9] = static_cast<uint8_t>(upper >> 8);
+    buffer[10] = buffer[11] = 0;
+    constexpr uint32_t key = 0x3C;
+    const auto keyLength = readUInt32(buffer + key + 4);
+    const auto cipher = readUInt32(buffer + key + 8);
+    if (cipher == 0 && keyLength >= 8 && keyLength <= 64 &&
+        (upper & (AuthUpperWpaPsk | AuthUpperWpa2Psk)))
+        writeUInt32(buffer + key + 8, LegacyCipherPassphrase);
+    return legacySize;
 }
 
 inline bool prepareRoamBand(Request &request, uint8_t *buffer, size_t capacity,
