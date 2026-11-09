@@ -37,6 +37,7 @@ constexpr size_t LegacyCapabilitySize = 12;
 constexpr size_t ScanCompletionCapabilityByte = 5;
 constexpr uint8_t ScanCompletionCapabilityMask = 0x40;
 constexpr uint32_t AssociateRequest = 20;
+constexpr uint32_t PowerRequest = 19;
 constexpr uint32_t IbssModeRequest = 0x18;
 constexpr uint32_t HostApModeRequest = 0x19;
 constexpr uint32_t LegacyHostApBufferSize = 0x5DC;
