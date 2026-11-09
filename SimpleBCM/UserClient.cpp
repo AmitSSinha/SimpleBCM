@@ -349,6 +349,20 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
         result = runRoamProfiles(endpoint, set, legacy, shadow, capacity);
     } else {
         result = static_cast<IOReturn>(bcm::Bridge::command(endpoint, set, legacy, shadow, capacity));
+        if (set && request == bcm::HostApModeRequest) {
+            // Forget on any stop, even a failed one, so a stop sent while the radio is off
+            // can never leave a hotspot to be brought back later.
+            if (legacy.request.value != 1)
+                bcm::Bridge::forgetHostAp();
+            else if (result == kIOReturnSuccess)
+                bcm::Bridge::rememberHostAp(endpoint, legacy, shadow, legacy.request.length);
+        } else if (set && result == kIOReturnSuccess && request == bcm::PowerRequest) {
+            const auto power = bcm::powerDataState(shadow, legacy.request.length);
+            if (power == 0)
+                bcm::Bridge::hostApPoweredOff(endpoint);
+            else if (power == 1)
+                bcm::Bridge::restoreHostAp(endpoint);
+        }
     }
     if (result == kIOReturnSuccess) {
         if (capabilities && !bcm::expandCapabilities(legacy.request, shadow, capacity, abi,

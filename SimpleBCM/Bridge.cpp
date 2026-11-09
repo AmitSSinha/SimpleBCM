@@ -30,6 +30,15 @@ static uint32_t state;
 static IOService *observedController;
 static const char *failure = "WaitingForDependencies";
 static IOSimpleLock *contextLock;
+static IOSimpleLock *hostApLock;
+static bool hostApActive;
+static bool hostApNeedsRestore;
+static char hostApInterface[16];
+static LegacyRequest hostApRequest;
+static uint8_t hostApData[LegacyHostApBufferSize];
+static uint32_t hostApLength;
+static uint32_t hostApRestores;
+static uint32_t hostApLastRestoreResult;
 static IOSimpleLock *hubLock;
 static BCM80211UserClient *clients[64];
 static thread_call_t eventCall;
@@ -560,6 +569,96 @@ int Bridge::command(const Endpoint &endpoint, bool set, LegacyRequest &request, 
     return result;
 }
 
+void Bridge::rememberHostAp(const Endpoint &endpoint, const LegacyRequest &request,
+                            const void *data, uint32_t length) {
+    if (!hostApLock || !data || !length || length > sizeof(hostApData))
+        return;
+    IOSimpleLockLock(hostApLock);
+    memcpy(hostApInterface, endpoint.name, sizeof(hostApInterface));
+    hostApRequest = request;
+    bzero(hostApData, sizeof(hostApData));
+    memcpy(hostApData, data, length);
+    hostApLength = length;
+    hostApActive = true;
+    hostApNeedsRestore = false;
+    IOSimpleLockUnlock(hostApLock);
+}
+
+void Bridge::forgetHostAp() {
+    if (!hostApLock)
+        return;
+    IOSimpleLockLock(hostApLock);
+    hostApActive = false;
+    hostApNeedsRestore = false;
+    hostApLength = 0;
+    bzero(hostApData, sizeof(hostApData));
+    IOSimpleLockUnlock(hostApLock);
+}
+
+void Bridge::hostApPoweredOff(const Endpoint &endpoint) {
+    if (!hostApLock)
+        return;
+    IOSimpleLockLock(hostApLock);
+    if (hostApActive && !strncmp(hostApInterface, endpoint.name, sizeof(hostApInterface)))
+        hostApNeedsRestore = true;
+    IOSimpleLockUnlock(hostApLock);
+}
+
+void Bridge::restoreHostAp(const Endpoint &endpoint) {
+    if (!hostApLock)
+        return;
+    auto buffer = static_cast<uint8_t *>(IOMalloc(LegacyHostApBufferSize));
+    if (!buffer)
+        return;
+    LegacyRequest start {};
+    uint32_t length = 0;
+    IOSimpleLockLock(hostApLock);
+    // Only after a real off -> on transition; repeated power-on sets while the radio is
+    // already up must not bounce a running hotspot.
+    const bool active = hostApActive && hostApNeedsRestore &&
+        !strncmp(hostApInterface, endpoint.name, sizeof(hostApInterface));
+    if (active) {
+        start = hostApRequest;
+        length = hostApLength;
+    }
+    IOSimpleLockUnlock(hostApLock);
+    int result = ENOENT;
+    // Mirror what turning Internet Sharing off and on does: stop, then start.
+    for (uint32_t attempt = 0; active && attempt < 2 && result; ++attempt) {
+        if (attempt)
+            IOSleep(500);
+        LegacyRequest stop = start;
+        stop.request.value = 2;
+        stop.request.length = 0;
+        stop.request.data = reinterpret_cast<uintptr_t>(buffer);
+        bzero(buffer, LegacyHostApBufferSize);
+        command(endpoint, true, stop, buffer, LegacyHostApBufferSize);
+        IOSimpleLockLock(hostApLock);
+        const bool stillActive = hostApActive;
+        memcpy(buffer, hostApData, length);
+        IOSimpleLockUnlock(hostApLock);
+        if (!stillActive)
+            break;
+        LegacyRequest request = start;
+        request.request.length = length;
+        request.request.data = reinterpret_cast<uintptr_t>(buffer);
+        result = command(endpoint, true, request, buffer, LegacyHostApBufferSize);
+    }
+    if (active) {
+        // Keep the restore pending until a start actually succeeds, so a power-on that
+        // races the power-off (radio still going down) is retried on the next power-on.
+        if (!result) {
+            IOSimpleLockLock(hostApLock);
+            hostApNeedsRestore = false;
+            IOSimpleLockUnlock(hostApLock);
+        }
+        __atomic_fetch_add(&hostApRestores, 1U, __ATOMIC_RELAXED);
+        __atomic_store_n(&hostApLastRestoreResult, static_cast<uint32_t>(result), __ATOMIC_RELAXED);
+    }
+    bzero(buffer, LegacyHostApBufferSize);
+    IOFree(buffer, LegacyHostApBufferSize);
+}
+
 static bool validate(mach_vm_address_t address, size_t size,
                      const ByteGuard *guards, size_t count) {
     if (size < sizeof(mach_header_64))
@@ -737,6 +836,7 @@ void Bridge::initialize() {
     }
     contextLock = IOSimpleLockAlloc();
     hubLock = IOSimpleLockAlloc();
+    hostApLock = IOSimpleLockAlloc();
     pending = static_cast<PendingEvent *>(IOMalloc(sizeof(PendingEvent) * PendingCapacity));
     eventCall = thread_call_allocate_with_options(drainEvents, nullptr, THREAD_CALL_PRIORITY_KERNEL, THREAD_CALL_OPTIONS_ONCE);
     if (!contextLock || !hubLock || !pending || !eventCall) {
@@ -809,6 +909,8 @@ void Bridge::publish(IOService *service) {
     service->setProperty("LastAssociationEventLength", __atomic_load_n(&counters.lastAssociationEventLength, __ATOMIC_RELAXED), 32);
     service->setProperty("LastAssociationEventReadResult", __atomic_load_n(&counters.lastAssociationEventReadResult, __ATOMIC_RELAXED), 32);
     service->setProperty("LastAvailabilityReadResult", __atomic_load_n(&counters.lastAvailabilityReadResult, __ATOMIC_RELAXED), 32);
+    service->setProperty("HostApRestores", __atomic_load_n(&hostApRestores, __ATOMIC_RELAXED), 32);
+    service->setProperty("HostApLastRestoreResult", __atomic_load_n(&hostApLastRestoreResult, __ATOMIC_RELAXED), 32);
 }
 
 }
