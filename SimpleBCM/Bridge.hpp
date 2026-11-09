@@ -72,6 +72,11 @@ struct HostApDiag {
     uint32_t requestedLength;
     uint32_t passedLength;
     uint32_t result;
+    uint32_t startCount;
+    uint32_t startRequest;
+    uint32_t startRequestedLength;
+    uint32_t startPassedLength;
+    uint32_t startResult;
     uint32_t captured;
     uint8_t data[2048];
 };

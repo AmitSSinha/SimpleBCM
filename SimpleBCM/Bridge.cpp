@@ -818,8 +818,15 @@ void Bridge::publish(IOService *service) {
         service->setProperty("DiagHostApRequestedLength", hostApDiag.requestedLength, 32);
         service->setProperty("DiagHostApPassedLength", hostApDiag.passedLength, 32);
         service->setProperty("DiagHostApResult", hostApDiag.result, 32);
+    }
+    if (__atomic_load_n(&hostApDiag.startCount, __ATOMIC_ACQUIRE)) {
+        service->setProperty("DiagHostApStartCount", hostApDiag.startCount, 32);
+        service->setProperty("DiagHostApStartRequest", hostApDiag.startRequest, 32);
+        service->setProperty("DiagHostApStartRequestedLength", hostApDiag.startRequestedLength, 32);
+        service->setProperty("DiagHostApStartPassedLength", hostApDiag.startPassedLength, 32);
+        service->setProperty("DiagHostApStartResult", hostApDiag.startResult, 32);
         if (hostApDiag.captured)
-            service->setProperty("DiagHostApData", hostApDiag.data, hostApDiag.captured);
+            service->setProperty("DiagHostApStartData", hostApDiag.data, hostApDiag.captured);
     }
 }
 

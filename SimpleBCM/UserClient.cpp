@@ -321,7 +321,9 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     legacy.request.data = reinterpret_cast<uintptr_t>(shadow);
     legacy.request.length = static_cast<uint32_t>(get ? outputSize : header->length);
     diagRequestedLength = legacy.request.length;
-    if (diagHostAp && set) {
+    // Keep the last START (req_val 1) request separately: a later STOP (req_val 2,
+    // no payload) must not overwrite the data we need to compare layouts.
+    if (diagHostAp && set && legacy.request.value == 1) {
         const uint32_t take = diagRequestedLength < sizeof(bcm::hostApDiag.data) ?
             diagRequestedLength : static_cast<uint32_t>(sizeof(bcm::hostApDiag.data));
         memcpy(bcm::hostApDiag.data, shadow, take);
@@ -393,9 +395,14 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
         }
     }
 done:
+    if (diagHostAp && set && legacy.request.value == 1) {
+        bcm::hostApDiag.startRequest = static_cast<uint32_t>(request);
+        bcm::hostApDiag.startRequestedLength = diagRequestedLength;
+        bcm::hostApDiag.startPassedLength = legacy.request.length;
+        bcm::hostApDiag.startResult = static_cast<uint32_t>(result);
+        __atomic_fetch_add(&bcm::hostApDiag.startCount, 1U, __ATOMIC_RELEASE);
+    }
     if (diagHostAp) {
-        if (!set || !diagRequestedLength)
-            bcm::hostApDiag.captured = 0;
         bcm::hostApDiag.request = static_cast<uint32_t>(request);
         bcm::hostApDiag.value = legacy.request.value;
         bcm::hostApDiag.requestedLength = diagRequestedLength;
