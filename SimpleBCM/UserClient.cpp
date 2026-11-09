@@ -287,10 +287,6 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     const bool associate = set && request == bcm::AssociateRequest;
     const bool roamProfiles = request == bcm::RoamProfileRequest && abi.roamProfileSize == bcm::NativeRoamProfileSize;
     bool outputPrepared = false;
-    // DIAGNOSTIC (Wi-Fi off/on with sharing): secrets are never recorded.
-    const bool diagEvent = request == bcm::IbssModeRequest || request == bcm::HostApModeRequest ||
-        (set && request == bcm::PowerRequest);
-    uint32_t diagLength = 0;
     __atomic_fetch_add(&bcm::counters.commands, 1ULL, __ATOMIC_RELAXED);
     __atomic_store_n(&bcm::counters.lastRequest, static_cast<uint32_t>(request), __ATOMIC_RELAXED);
     if (associate)
@@ -322,7 +318,6 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     }
     legacy.request.data = reinterpret_cast<uintptr_t>(shadow);
     legacy.request.length = static_cast<uint32_t>(get ? outputSize : header->length);
-    diagLength = legacy.request.length;
     // Sequoia's apple80211_network_data (1764 bytes) widens mode/auth_lower/auth_upper from
     // u16 to u32, shifting every later field by 4 bytes, and marks a WPA/WPA2 passphrase as
     // cipher NONE. Translate HOST_AP start requests to the legacy AirPort_BrcmNIC layout.
@@ -395,25 +390,6 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
         }
     }
 done:
-    if (diagEvent || (set && result != kIOReturnSuccess)) {
-        bcm::DiagEvent event {};
-        event.request = static_cast<uint32_t>(request);
-        event.command = set ? 1 : get ? 2 : 0;
-        event.value = legacy.request.value;
-        event.requestedLength = diagLength;
-        event.passedLength = legacy.request.length;
-        event.result = static_cast<uint32_t>(result);
-        // After translation the buffer is in legacy layout; copy only non-secret fields.
-        if (set && request == bcm::HostApModeRequest && legacy.request.value == 1 &&
-            legacy.request.length >= 0x4C) {
-            event.authUpper = static_cast<uint32_t>(shadow[8] | shadow[9] << 8);
-            event.channel = bcm::readUInt32(shadow + 0x10);
-            event.ssidLength = bcm::readUInt32(shadow + 0x18);
-            event.keyLength = bcm::readUInt32(shadow + 0x40);
-            event.cipher = bcm::readUInt32(shadow + 0x44);
-        }
-        bcm::recordDiagEvent(event);
-    }
     if (outputPrepared) {
         const auto status = arguments->structureOutputDescriptor->complete(kIODirectionIn);
         if (result == kIOReturnSuccess)

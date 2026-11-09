@@ -26,16 +26,6 @@
 namespace bcm {
 
 Counters counters {};
-static constexpr uint32_t DiagEventCount = 48;
-static DiagEvent diagEvents[DiagEventCount];
-static uint32_t diagEventSequence;
-
-void recordDiagEvent(const DiagEvent &event) {
-    const auto sequence = __atomic_add_fetch(&diagEventSequence, 1U, __ATOMIC_ACQ_REL);
-    auto &slot = diagEvents[(sequence - 1) % DiagEventCount];
-    slot = event;
-    slot.sequence = sequence;
-}
 static uint32_t state;
 static IOService *observedController;
 static const char *failure = "WaitingForDependencies";
@@ -819,25 +809,6 @@ void Bridge::publish(IOService *service) {
     service->setProperty("LastAssociationEventLength", __atomic_load_n(&counters.lastAssociationEventLength, __ATOMIC_RELAXED), 32);
     service->setProperty("LastAssociationEventReadResult", __atomic_load_n(&counters.lastAssociationEventReadResult, __ATOMIC_RELAXED), 32);
     service->setProperty("LastAvailabilityReadResult", __atomic_load_n(&counters.lastAvailabilityReadResult, __ATOMIC_RELAXED), 32);
-    // DIAGNOSTIC (Wi-Fi off/on with sharing)
-    const auto diagLatest = __atomic_load_n(&diagEventSequence, __ATOMIC_ACQUIRE);
-    if (diagLatest) {
-        static char text[DiagEventCount * 112];
-        size_t used = 0;
-        const uint32_t first = diagLatest > DiagEventCount ? diagLatest - DiagEventCount + 1 : 1;
-        for (uint32_t sequence = first; sequence <= diagLatest && used < sizeof(text); ++sequence) {
-            const auto &event = diagEvents[(sequence - 1) % DiagEventCount];
-            const int written = snprintf(text + used, sizeof(text) - used,
-                "#%u %s req=%u val=%d len=%u->%u res=0x%x auth=%u ch=%u ssid=%u key=%u cipher=%u | ",
-                event.sequence, event.command == 1 ? "SET" : event.command == 2 ? "GET" : "?",
-                event.request, event.value, event.requestedLength, event.passedLength, event.result,
-                event.authUpper, event.channel, event.ssidLength, event.keyLength, event.cipher);
-            if (written <= 0)
-                break;
-            used += static_cast<size_t>(written);
-        }
-        service->setProperty("DiagEvents", text);
-    }
 }
 
 }
