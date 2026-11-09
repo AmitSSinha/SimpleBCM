@@ -64,6 +64,25 @@ struct Counters {
 
 extern Counters counters;
 
+// DIAGNOSTIC (Wi-Fi off/on with sharing): ring of recent host-AP/power/failed-set requests.
+// Holds request metadata only; key material is never copied.
+struct DiagEvent {
+    uint32_t sequence;
+    uint32_t request;
+    uint32_t command;
+    int32_t value;
+    uint32_t requestedLength;
+    uint32_t passedLength;
+    uint32_t result;
+    uint32_t authUpper;
+    uint32_t channel;
+    uint32_t ssidLength;
+    uint32_t keyLength;
+    uint32_t cipher;
+};
+
+void recordDiagEvent(const DiagEvent &event);
+
 class Bridge {
 public:
     static void initialize();
