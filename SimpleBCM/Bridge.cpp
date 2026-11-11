@@ -22,6 +22,7 @@
 #include <mach-o/loader.h>
 #include <sys/errno.h>
 #include <sys/systm.h>
+#include <net/kpi_interface.h>
 
 namespace bcm {
 
@@ -39,6 +40,7 @@ static uint8_t hostApData[LegacyHostApBufferSize];
 static uint32_t hostApLength;
 static uint32_t hostApRestores;
 static uint32_t hostApLastRestoreResult;
+static uint32_t hostApSkippedNoSharing;
 // Non-secret: raw SET POWER payload (version, radios, states) and how it was classified.
 static uint8_t lastPowerData[PowerDataSize];
 static uint32_t powerSetOff, powerSetOn, powerSetUnknown;
@@ -616,9 +618,36 @@ void Bridge::hostApPoweredOff(const Endpoint &endpoint) {
     IOSimpleLockUnlock(hostApLock);
 }
 
+// Internet Sharing keeps its bridge (bridge100, 192.168.2.1) for as long as sharing is on,
+// even while Wi-Fi is off, and removes it when sharing is turned off. Turning sharing off
+// while Wi-Fi is off sends the driver nothing, so this is the only way to tell at power-on
+// whether the hotspot is still wanted. bridge0 (Thunderbolt Bridge) is deliberately ignored.
+static bool internetSharingActive() {
+    for (uint32_t unit = 100; unit < 110; ++unit) {
+        char name[16];
+        snprintf(name, sizeof(name), "bridge%u", unit);
+        ifnet_t interface = nullptr;
+        if (!ifnet_find_by_name(name, &interface) && interface) {
+            ifnet_release(interface);
+            return true;
+        }
+    }
+    return false;
+}
+
 void Bridge::restoreHostAp(const Endpoint &endpoint) {
     if (!hostApLock)
         return;
+    if (!internetSharingActive()) {
+        IOSimpleLockLock(hostApLock);
+        const bool pending = hostApActive && hostApNeedsRestore;
+        IOSimpleLockUnlock(hostApLock);
+        if (pending) {
+            forgetHostAp();
+            __atomic_fetch_add(&hostApSkippedNoSharing, 1U, __ATOMIC_RELAXED);
+        }
+        return;
+    }
     auto buffer = static_cast<uint8_t *>(IOMalloc(LegacyHostApBufferSize));
     if (!buffer)
         return;
@@ -924,6 +953,7 @@ void Bridge::publish(IOService *service) {
     service->setProperty("HostApRestores", __atomic_load_n(&hostApRestores, __ATOMIC_RELAXED), 32);
     service->setProperty("HostApLastRestoreResult", __atomic_load_n(&hostApLastRestoreResult, __ATOMIC_RELAXED), 32);
     service->setProperty("HostApPending", hostApActive && hostApNeedsRestore);
+    service->setProperty("HostApSkippedNoSharing", __atomic_load_n(&hostApSkippedNoSharing, __ATOMIC_RELAXED), 32);
     service->setProperty("HostApRemembered", hostApActive);
     service->setProperty("PowerSetOff", __atomic_load_n(&powerSetOff, __ATOMIC_RELAXED), 32);
     service->setProperty("PowerSetOn", __atomic_load_n(&powerSetOn, __ATOMIC_RELAXED), 32);
