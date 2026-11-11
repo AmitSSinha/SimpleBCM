@@ -639,12 +639,25 @@ void Bridge::restoreHostAp(const Endpoint &endpoint) {
     if (!hostApLock)
         return;
     if (!internetSharingActive()) {
+        LegacyRequest stop {};
         IOSimpleLockLock(hostApLock);
-        const bool pending = hostApActive && hostApNeedsRestore;
+        const bool pending = hostApActive && hostApNeedsRestore &&
+            !strncmp(hostApInterface, endpoint.name, sizeof(hostApInterface));
+        if (pending)
+            stop = hostApRequest;
         IOSimpleLockUnlock(hostApLock);
         if (pending) {
             forgetHostAp();
+            // Sharing was turned off while Wi-Fi was off, so no stop ever reached the driver
+            // and AirPort_BrcmNIC still has host-AP configured. Send the stop that turning
+            // off "To devices using: Wi-Fi" would send, so Wi-Fi comes back as a client.
+            uint8_t empty[16] = {};
+            stop.request.value = 2;
+            stop.request.length = 0;
+            stop.request.data = reinterpret_cast<uintptr_t>(empty);
+            const auto result = command(endpoint, true, stop, empty, sizeof(empty));
             __atomic_fetch_add(&hostApSkippedNoSharing, 1U, __ATOMIC_RELAXED);
+            __atomic_store_n(&hostApLastRestoreResult, static_cast<uint32_t>(result), __ATOMIC_RELAXED);
         }
         return;
     }
