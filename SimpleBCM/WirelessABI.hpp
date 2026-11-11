@@ -236,23 +236,20 @@ inline bool prepareScanMultiple(Request &request, uint8_t *buffer, size_t capaci
     return true;
 }
 
-// apple80211_power_data: version (1) @0, radio count @4, per-radio state @8 (0 off, 1 on).
+// apple80211_power_data: version @0, radio count @4, per-radio state @8.
+// State 0 is off; any other value (on, TX-only, RX-only) counts as on. The version is not
+// checked: Sequoia's SET POWER payload did not match the strict version-1/0-or-1 form.
 // Returns 1 if any radio is on, 0 if all are off, -1 if the data is not recognised.
 inline int powerDataState(const uint8_t *power, size_t length) {
-    if (!power || length != PowerDataSize || readUInt32(power) != 1)
+    if (!power || length != PowerDataSize)
         return -1;
     const auto radios = readUInt32(power + 4);
     if (!radios || radios > 4)
         return -1;
-    int state = 0;
-    for (size_t index = 0; index < radios; ++index) {
-        const auto value = readUInt32(power + 8 + index * 4);
-        if (value > 1)
-            return -1;
-        if (value == 1)
-            state = 1;
-    }
-    return state;
+    for (size_t index = 0; index < radios; ++index)
+        if (readUInt32(power + 8 + index * 4))
+            return 1;
+    return 0;
 }
 
 inline bool encodePowerAvailability(const uint8_t *power, size_t length,

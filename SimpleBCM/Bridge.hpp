@@ -85,6 +85,7 @@ public:
                                const void *data, uint32_t length);
     static void forgetHostAp();
     static void hostApPoweredOff(const Endpoint &endpoint);
+    static void notePowerSet(const void *data, uint32_t length, int state);
     static void restoreHostAp(const Endpoint &endpoint);
     static void publish(IOService *service);
     static bool prepareImage(LinkedImage &image, size_t index);

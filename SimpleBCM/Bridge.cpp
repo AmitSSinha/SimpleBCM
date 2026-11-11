@@ -39,6 +39,9 @@ static uint8_t hostApData[LegacyHostApBufferSize];
 static uint32_t hostApLength;
 static uint32_t hostApRestores;
 static uint32_t hostApLastRestoreResult;
+// Non-secret: raw SET POWER payload (version, radios, states) and how it was classified.
+static uint8_t lastPowerData[PowerDataSize];
+static uint32_t powerSetOff, powerSetOn, powerSetUnknown;
 static IOSimpleLock *hubLock;
 static BCM80211UserClient *clients[64];
 static thread_call_t eventCall;
@@ -595,6 +598,13 @@ void Bridge::forgetHostAp() {
     IOSimpleLockUnlock(hostApLock);
 }
 
+void Bridge::notePowerSet(const void *data, uint32_t length, int state) {
+    if (data && length == PowerDataSize)
+        memcpy(lastPowerData, data, PowerDataSize);
+    __atomic_fetch_add(state == 0 ? &powerSetOff : state == 1 ? &powerSetOn : &powerSetUnknown,
+                       1U, __ATOMIC_RELAXED);
+}
+
 void Bridge::hostApPoweredOff(const Endpoint &endpoint) {
     if (!hostApLock)
         return;
@@ -911,6 +921,12 @@ void Bridge::publish(IOService *service) {
     service->setProperty("LastAvailabilityReadResult", __atomic_load_n(&counters.lastAvailabilityReadResult, __ATOMIC_RELAXED), 32);
     service->setProperty("HostApRestores", __atomic_load_n(&hostApRestores, __ATOMIC_RELAXED), 32);
     service->setProperty("HostApLastRestoreResult", __atomic_load_n(&hostApLastRestoreResult, __ATOMIC_RELAXED), 32);
+    service->setProperty("HostApPending", hostApActive && hostApNeedsRestore);
+    service->setProperty("HostApRemembered", hostApActive);
+    service->setProperty("PowerSetOff", __atomic_load_n(&powerSetOff, __ATOMIC_RELAXED), 32);
+    service->setProperty("PowerSetOn", __atomic_load_n(&powerSetOn, __ATOMIC_RELAXED), 32);
+    service->setProperty("PowerSetUnknown", __atomic_load_n(&powerSetUnknown, __ATOMIC_RELAXED), 32);
+    service->setProperty("PowerSetLastData", lastPowerData, PowerDataSize);
 }
 
 }

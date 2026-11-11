@@ -358,6 +358,7 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
                 bcm::Bridge::rememberHostAp(endpoint, legacy, shadow, legacy.request.length);
         } else if (set && result == kIOReturnSuccess && request == bcm::PowerRequest) {
             const auto power = bcm::powerDataState(shadow, legacy.request.length);
+            bcm::Bridge::notePowerSet(shadow, legacy.request.length, power);
             if (power == 0)
                 bcm::Bridge::hostApPoweredOff(endpoint);
             else if (power == 1)
