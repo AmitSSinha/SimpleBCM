@@ -318,6 +318,19 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
     }
     legacy.request.data = reinterpret_cast<uintptr_t>(shadow);
     legacy.request.length = static_cast<uint32_t>(get ? outputSize : header->length);
+    // Sequoia's apple80211_network_data (1764 bytes) widens mode/auth_lower/auth_upper from
+    // u16 to u32, shifting every later field by 4 bytes, and marks a WPA/WPA2 passphrase as
+    // cipher NONE. Translate HOST_AP start requests to the legacy AirPort_BrcmNIC layout.
+    if (set && request == bcm::HostApModeRequest && legacy.request.value == 1 &&
+        legacy.request.length > bcm::LegacyHostApBufferSize)
+        legacy.request.length = bcm::translateHostApNetworkData(shadow, legacy.request.length);
+    // IO80211FamilyLegacy setIBSS_Or_HostAP_Mode (IBSS_MODE 0x18 / HOST_AP_MODE 0x19)
+    // copies req_len bytes into a fixed 1500-byte stack buffer without a bounds check.
+    // Sequoia's airportd sends a larger native struct when enabling sharing/host-AP,
+    // which smashes the stack canary. Clamp to the legacy buffer size.
+    if (set && (request == bcm::IbssModeRequest || request == bcm::HostApModeRequest) &&
+        legacy.request.length > bcm::LegacyHostApBufferSize)
+        legacy.request.length = bcm::LegacyHostApBufferSize;
     if (scanResult && !bcm::prepareScanResult(legacy.request, shadow, capacity, abi))
         goto done;
     if (set && request == bcm::ScanMultipleRequest &&
@@ -336,6 +349,22 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
         result = runRoamProfiles(endpoint, set, legacy, shadow, capacity);
     } else {
         result = static_cast<IOReturn>(bcm::Bridge::command(endpoint, set, legacy, shadow, capacity));
+        if (set && request == bcm::HostApModeRequest) {
+            // Forget on any stop, even a failed one, so a stop sent while the radio is off
+            // can never leave a hotspot to be brought back later.
+            if (legacy.request.value != 1)
+                bcm::Bridge::forgetHostAp();
+            else if (legacy.request.length && legacy.request.length <= bcm::LegacyHostApBufferSize)
+                bcm::Bridge::rememberHostAp(endpoint, legacy, shadow, legacy.request.length,
+                                            result == kIOReturnSuccess);
+        } else if (set && result == kIOReturnSuccess && request == bcm::PowerRequest) {
+            const auto power = bcm::powerDataState(shadow, legacy.request.length);
+            bcm::Bridge::notePowerSet(shadow, legacy.request.length, power);
+            if (power == 0)
+                bcm::Bridge::hostApPoweredOff(endpoint);
+            else if (power == 1)
+                bcm::Bridge::restoreHostAp(endpoint);
+        }
     }
     if (result == kIOReturnSuccess) {
         if (capabilities && !bcm::expandCapabilities(legacy.request, shadow, capacity, abi,

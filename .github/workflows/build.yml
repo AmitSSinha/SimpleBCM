@@ -74,7 +74,16 @@ jobs:
         run: python3 Tools/build.py build --configuration Debug
       - name: Build and validate Release
         run: python3 Tools/build.py build --configuration Release
+      - name: Upload raw kexts (before analysis)
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: SimpleBCM-raw-kexts
+          path: |
+            build/DerivedData/Build/Products/Debug/SimpleBCM.kext
+            build/DerivedData/Build/Products/Release/SimpleBCM.kext
+          if-no-files-found: error
       - name: Analyze Release
+        timeout-minutes: 15
         run: python3 Tools/build.py analyze --configuration Release
       - name: Package and verify
         env:
