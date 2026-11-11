@@ -37,6 +37,7 @@ constexpr size_t LegacyCapabilitySize = 12;
 constexpr size_t ScanCompletionCapabilityByte = 5;
 constexpr uint8_t ScanCompletionCapabilityMask = 0x40;
 constexpr uint32_t AssociateRequest = 20;
+constexpr uint32_t PowerRequest = 19;
 constexpr uint32_t IbssModeRequest = 0x18;
 constexpr uint32_t HostApModeRequest = 0x19;
 constexpr uint32_t LegacyHostApBufferSize = 0x5DC;
@@ -233,6 +234,25 @@ inline bool prepareScanMultiple(Request &request, uint8_t *buffer, size_t capaci
         buffer[offset] = 0;
     request.length = LegacyScanMultipleSize;
     return true;
+}
+
+// apple80211_power_data: version (1) @0, radio count @4, per-radio state @8 (0 off, 1 on).
+// Returns 1 if any radio is on, 0 if all are off, -1 if the data is not recognised.
+inline int powerDataState(const uint8_t *power, size_t length) {
+    if (!power || length != PowerDataSize || readUInt32(power) != 1)
+        return -1;
+    const auto radios = readUInt32(power + 4);
+    if (!radios || radios > 4)
+        return -1;
+    int state = 0;
+    for (size_t index = 0; index < radios; ++index) {
+        const auto value = readUInt32(power + 8 + index * 4);
+        if (value > 1)
+            return -1;
+        if (value == 1)
+            state = 1;
+    }
+    return state;
 }
 
 inline bool encodePowerAvailability(const uint8_t *power, size_t length,
