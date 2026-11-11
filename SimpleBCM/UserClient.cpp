@@ -354,8 +354,9 @@ IOReturn BCM80211UserClient::runCommand(IOExternalMethodArguments *arguments, si
             // can never leave a hotspot to be brought back later.
             if (legacy.request.value != 1)
                 bcm::Bridge::forgetHostAp();
-            else if (result == kIOReturnSuccess)
-                bcm::Bridge::rememberHostAp(endpoint, legacy, shadow, legacy.request.length);
+            else if (legacy.request.length && legacy.request.length <= bcm::LegacyHostApBufferSize)
+                bcm::Bridge::rememberHostAp(endpoint, legacy, shadow, legacy.request.length,
+                                            result == kIOReturnSuccess);
         } else if (set && result == kIOReturnSuccess && request == bcm::PowerRequest) {
             const auto power = bcm::powerDataState(shadow, legacy.request.length);
             bcm::Bridge::notePowerSet(shadow, legacy.request.length, power);

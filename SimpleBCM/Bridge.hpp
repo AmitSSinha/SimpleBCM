@@ -82,7 +82,7 @@ public:
     // off nor restarts it at power on (Apple's own drivers keep it), but AirPort_BrcmNIC loses
     // it with the radio. Remember the last successful start and replay stop+start at power on.
     static void rememberHostAp(const Endpoint &endpoint, const LegacyRequest &request,
-                               const void *data, uint32_t length);
+                               const void *data, uint32_t length, bool started);
     static void forgetHostAp();
     static void hostApPoweredOff(const Endpoint &endpoint);
     static void notePowerSet(const void *data, uint32_t length, int state);

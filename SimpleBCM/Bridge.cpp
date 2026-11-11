@@ -573,7 +573,7 @@ int Bridge::command(const Endpoint &endpoint, bool set, LegacyRequest &request, 
 }
 
 void Bridge::rememberHostAp(const Endpoint &endpoint, const LegacyRequest &request,
-                            const void *data, uint32_t length) {
+                            const void *data, uint32_t length, bool started) {
     if (!hostApLock || !data || !length || length > sizeof(hostApData))
         return;
     IOSimpleLockLock(hostApLock);
@@ -583,7 +583,9 @@ void Bridge::rememberHostAp(const Endpoint &endpoint, const LegacyRequest &reque
     memcpy(hostApData, data, length);
     hostApLength = length;
     hostApActive = true;
-    hostApNeedsRestore = false;
+    // A start that failed (e.g. sharing turned on while Wi-Fi is off) is replayed at the
+    // next power-on; airportd does not resend it.
+    hostApNeedsRestore = !started;
     IOSimpleLockUnlock(hostApLock);
 }
 
